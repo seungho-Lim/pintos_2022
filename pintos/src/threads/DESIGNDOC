@@ -1,0 +1,238 @@
+	    +--------------------+
+            |        EE 415      |
+            | PROJECT 1: THREADS |
+            |   DESIGN DOCUMENT  |
+            +--------------------+
+
+---- GROUP ----
+
+>>
+
+황채영 <cyhwang97@kaist.ac.kr>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+                 ALARM CLOCK
+                 ===========
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+In thread.h
+
+struct thread
+  {
+    /* Owned by thread.c. */
+...
+    int64_t wakeup_tick;			/* Thread가 깨어나야할 시간을 명시합니다. */
+...
+  };
+
+In thread.c
+
+static struct list sleep_list;			/* Block 된 thread들을 관리하기 위한 리스트입니다. */
+static int64_t global_ticks;			/* Sleep_list에 있는 Thread 중 가장 빨리 wake up 해야할 thread의 wakeup_tick 값 입니다. */
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe what happens in a call to timer_sleep(),
+>> including the effects of the timer interrupt handler.
+ timer_sleep() 가 호출되면 받은 ticks 만큼 현재 thread를 sleep 시키고 sleep list에 넣습니다. 후에 tick이 지나면 timer_interrupt() 에 의하여 sleep_list에 있는 thread 중 깨울 것을 선택합니다.
+
+>> A3: What steps are taken to minimize the amount of time spent in
+>> the timer interrupt handler?
+현재 sleep_list 의 있는 thread 중 가장 빨리 일어 나야하는 thread 의 정보를 담고있는 global_ticks를 이용하여 sleep_list를 순회 할 필요가 없을 때는 바로 함수를 return 하였습니다.
+
+---- SYNCHRONIZATION ----
+
+>> A4: How are race conditions avoided when multiple threads call
+>> timer_sleep() simultaneously?
+
+Interrupt를 disable 함으로서 해결하였다.
+>> A5: How are race conditions avoided when a timer interrupt occurs
+>> during a call to timer_sleep()?
+Interrupt를 disable 함으로서 해결하였다.
+
+---- RATIONALE ----
+
+>> A6: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+일부 list들을 priority 순서 대로 정렬하여 탐색을 전부 할 필요 없이(시간을 줄일 수 있게) 구현하였다.
+ 
+             PRIORITY SCHEDULING
+             ===================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+In thread.h
+struct thread
+  {
+...
+    /* Shared between thread.c and synch.c. */
+...
+    struct list donations;			/* Priority donation을 수행하기 위한 donation list입니다. */
+    struct list_elem d_elem;			/* Donation list의 연결 관계를 유지하기 위한 element를 나타냅니다. */
+    struct lock *wait_on_lock;			/* 해당 Thread가 기다리고 있는 lock을 나타냅니다. */
+    int init_priority;				/* Thread가 donation 이전에 가지고 있던 priority를 나타냅니다. */
+...
+  };
+
+>> B2: Explain the data structure used to track priority donation.
+>> Use ASCII art to diagram a nested donation.  (Alternately, submit a
+>> .png file.)
+priority : Thread L < Thread M < Thread H
+1)donation
+Thread L 이 lock A를 점유하고 있는 경우 lock A의 holder 가 된다. 다른 Thread M가 들어와 lock A를 요청하는 경우 Thread M의 wait_on_lock은 lock A의 holder인 Thread L이되고 이 때 donation이 일어나 Thread의 init_priority는 기존의 것, priority는 Thread_M과 같이 변한다.
+Thread M이 Thread L 의 donations list 에 추가된다.
+2)multiple donation
+위 와 같은 상황에 Thead L이 lock B 또한 점유하고 있으면 lock B의 holder 또한 된다. 이 때 Thead H가 들어과 lock B를 요청하면 Thead H의 wait_on_lock은 lock B의 holder인 Thread L이되고 이 때 donation이 일어나 Thread의 init_priority는 thread_M의 것, priority는 Thread_H과 같이 변한다.
+Thread H 또한 Thread L 의 donations list 에 추가된다.
+3)nested donation
+1과 같은 상황에 Thread M 이 lock B를 점유하고 있으면 lock B의 holder가 된다. 이 때 Thead H가 들어와 lock B를 요청하면 Thread H가 priority가 Thread L, M 으로 donation 된다. 이때 Thread L, M은 원래의 priority를 init_priority에 저장하게 된다.
+Thread H 가 Thread M 의 donations list 에 추가된다.
+
+---- ALGORITHMS ----
+
+>> B3: How do you ensure that the highest priority thread waiting for
+>> a lock, semaphore, or condition variable wakes up first?
+waiters list를 정렬하여 가장 priority가 높은 thread 부터 순서대로 깨어 나도록 한다.
+ 
+>> B4: Describe the sequence of events when a call to lock_acquire()
+>> causes a priority donation.  How is nested donation handled?
+lock_acquire()를 호출하면 해당 lock이 비어있지 않을 때 lock->holder의 donations list에 해당 thread를 추가한 후 priority_donation() 함수를 호출한다.
+priority donation() 함수는 해당 lock의 holder를 찾아가 priority를 donation하고 그 holder가 기다리는 lock이 있다면 그 또한 방문하여 donation을 수행한다.
+만약 어떤 holder가 원래 보다 크다면 더 이상 holder를 찾는 반복을 할 필요 없으므로 반복을 중지한다.
+
+>> B5: Describe the sequence of events when lock_release() is called
+>> on a lock that a higher-priority thread is waiting for.
+lock_release()를 호출하면 해당 lock을 점유하고 있는 thread의 donations list 중 해당 lock을 기다리는 thread들을 모두 list에서 제거한다.
+그 후 refresh_priority()를 호출하는데 현재 thread의 priority를 donation 전의 priority로 변경한 후 다시 남은 donations list의 thread중 가장 높은 priority를 가진 thread와 비교하여 donation을 수행한다. 
+
+---- SYNCHRONIZATION ----
+
+>> B6: Describe a potential race in thread_set_priority() and explain
+>> how your implementation avoids it.  Can you use a lock to avoid
+>> this race?
+Donor(donation)와 thread A(thread_set_priority())가 각자 thread A의 priority를 변경하려고 할 수 있다.
+   
+---- RATIONALE ----
+
+>> B7: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+donation list들을 semaphore를 기다리는 thread의 priority 순서 대로 정렬하여 탐색을 전부 할 필요 없이(시간을 줄일 수 있게) 구현하였다.
+
+              ADVANCED SCHEDULER
+              ==================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+In thead.h
+struct thread
+  {
+...
+    int nice;				/* Thread의 nice value입니다. */
+    int recent_cpu;				/* Thread의 recent_cpu 입니다. */
+    int64_t latency;				/* Thread가 어느 정도의 tick 동안 살아 있었는지를 측정하기 위한 값입니다. */
+...
+  };
+
+In thread.c
+#define NICE_DEFAULT 0			/* Thread를 Init 할때의 Nice value 입니다. */
+#define RECENT_CPU_DEFAULT 0		/* Thread를 Init 할때의 Recent_cpu value 입니다. */
+#define LOAD_AVG_DEFAULT 0		/* Init 할때의 Load_avg value 입니다. */
+
+int load_avg;				/* Load_avg value 입니다. */
+
+In fixed_point.h
+#define F (1 << 14) 			/* 14자리의 부동 소수점을 나타 내기 위한 값입니다. */
+#define INT_MAX ((1 << 31) - 1)		/* Int 의 최대값을 나타냅니다. */
+#define INT_MIN (-(1 << 31))		/* Int 의 최솟값을 나타냅니다. */
+
+
+---- ALGORITHMS ----
+
+>> C2: Suppose threads A, B, and C have nice values 0, 1, and 2.  Each
+>> has a recent_cpu value of 0.  Fill in the table below showing the
+>> scheduling decision and the priority and recent_cpu values for each
+>> thread after each given number of timer ticks:
+
+timer  recent_cpu    priority   thread
+ticks   A   B   C   A   B   C   to run
+-----  --  --  --  --  --  --   ------
+ 0      0   1   2  63  61  59     A
+ 4      4   1   2  62  61  59     A
+ 8      7   2   2  61  61  59     B
+12     10   3   2  61  60  59     A
+16     11   6   2  60  60  59     B
+20     14   7   2  60  59  59     A
+24     15   9   3  59  59  58     B
+28     17  11   3  59  58  58     A
+32     19  11   5  58  58  58     C
+36     19  13   7  58  58  57     B
+
+>> C3: Did any ambiguities in the scheduler specification make values
+>> in the table uncertain?  If so, what rule did you use to resolve
+>> them?  Does this match the behavior of your scheduler?
+Table을 만들때 몇 tick이 몇 초인지 나와 있지 않았다. 따라서 pintos에 TIME_FREQ인 100으로 가정하였다.
+또한 priority가 같은 경우에 대한 rule은 최근에 덜 실행된 thread를 실행시켰다. Scheduler는 thread를 고르게 실행하도록 노력해야하기 때문에 이와같은 rule을 정하였다.
+>> C4: How is the way you divided the cost of scheduling between code
+>> inside and outside interrupt context likely to affect performance?
+recent_cpu, load_avg등 여러 변수를 계산하는데에는 cost가 들기 때문에 interrupt context 내부에서 cost를 증가시키면 performance를 낮춘다.
+---- RATIONALE ----
+
+>> C5: Briefly critique your design, pointing out advantages and
+>> disadvantages in your design choices.  If you were to have extra
+>> time to work on this part of the project, how might you choose to
+>> refine or improve your design?
+특정 list들을 sorted 상태로 유지하여 탐색, 탐색후 제거 작업에 O(1)의 복잡도를 가지는 점에서 유리하다.
+다만 insert 시에는 O(N)이라는 복잡도가 소요되어 불리하다.
+
+>> C6: The assignment explains arithmetic for fixed-point math in
+>> detail, but it leaves it open to you to implement it.  Why did you
+>> decide to implement it the way you did?  If you created an
+>> abstraction layer for fixed-point math, that is, an abstract data
+>> type and/or a set of functions or macros to manipulate fixed-point
+>> numbers, why did you do so?  If not, why not?
+부동 소숫점 17.14를 계산 하기위하여 F를 1<<14로 지정하여서 여러 연산에 편하게 사용하였다.
+               SURVEY QUESTIONS
+               ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
+
